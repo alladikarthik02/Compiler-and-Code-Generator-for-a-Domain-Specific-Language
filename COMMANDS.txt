@@ -1,0 +1,192 @@
+===============================================================================
+  dslc - COMMAND CHEAT SHEET
+  Project: ~/Downloads/dslc
+===============================================================================
+
+  Always start here:
+      cd ~/Downloads/dslc
+
+
+-------------------------------------------------------------------------------
+  0. THE 4 COMMANDS YOU ACTUALLY NEED
+-------------------------------------------------------------------------------
+
+  cmake -B build -S .                          # configure  (NOTE the final ".")
+  cmake --build build                          # compile
+  ctest --test-dir build --output-on-failure   # run all 7 test suites
+  ./build/dslc examples/fib.dsl                # compile a program and run it
+
+
+-------------------------------------------------------------------------------
+  1. BUILD
+-------------------------------------------------------------------------------
+
+  cmake -B build -S .
+      Configure the project. Run ONCE (or after editing CMakeLists.txt).
+        -B build   = put build output in the "build" folder
+        -S .       = source is here  <-- THE TRAILING DOT IS REQUIRED
+      Forgetting the dot gives: "CMake Error: No source directory specified"
+
+  cmake --build build
+      Compile. Run after every code change. Only rebuilds what changed.
+
+  rm -rf build && cmake -B build -S . && cmake --build build
+      Clean rebuild from scratch. Safe: build/ is 100% regenerated.
+
+  Optional flags:
+      -j 8                     compile with 8 parallel jobs (faster)
+      --target dslc            build only the compiler, skip tests
+      -v                       verbose: show exact compiler commands
+
+
+-------------------------------------------------------------------------------
+  2. TESTS
+-------------------------------------------------------------------------------
+
+  ctest --test-dir build --output-on-failure
+      Run ALL 7 suites.
+        --test-dir build       where the compiled tests live
+        --output-on-failure    only print details when something FAILS
+      Expected: "100% tests passed, 0 tests failed out of 7"
+
+  ctest --test-dir build -R sema --output-on-failure
+      Run ONE suite.  -R = run only tests matching this name.
+      Suite names: smoke  lexer  parser  sema  ir  opt  e2e
+      Two at once:  -R "opt|e2e"        (the | means "or")
+
+  ./build/test_parser
+      Run one test binary directly. Most detail.
+      Prints: "[parser] 16 checks, 0 failures"
+      On failure prints the exact file:line of each broken assertion.
+
+  Extras:
+      ctest --test-dir build -V               verbose: output of ALL tests
+      ctest --test-dir build --rerun-failed   only re-run what failed last time
+      ctest --test-dir build -N               list test names, don't run
+      ctest --test-dir build -j 8             run suites in parallel
+
+
+-------------------------------------------------------------------------------
+  3. RUNNING / INSPECTING PROGRAMS
+-------------------------------------------------------------------------------
+
+  General form:   ./build/dslc <file.dsl> [options]
+
+  ./build/dslc examples/fib.dsl
+      Compile at -O1 and execute. (Running is the DEFAULT - there is no --run flag.)
+
+  ./build/dslc file.dsl --stats
+      Print instruction count before -> after optimization, and the % removed.
+
+  --emit=<stage>   Stop at a stage, print it, don't execute:
+      --emit=tokens     lexer output (tokens with line/col)
+      --emit=ast        the syntax tree
+      --emit=sema       type-check result
+      --emit=ir         UNOPTIMIZED intermediate representation
+      --emit=ir-opt     OPTIMIZED intermediate representation
+      --emit=bc         final register bytecode
+
+  -O0     optimizations OFF
+  -O1     optimizations ON  (this is the default)
+
+
+-------------------------------------------------------------------------------
+  4. *** THE 60-SECOND LIVE DEMO ***  (run these in order)
+-------------------------------------------------------------------------------
+
+  ctest --test-dir build --output-on-failure
+      "Seven suites, all passing - one per compiler stage plus end-to-end."
+
+  ./build/dslc examples/fib.dsl
+      "fib(10) and fib(20) - real recursion running on my VM."   -> 55, 6765
+
+  ./build/dslc examples/opt_demo.dsl --emit=ir
+      "Eight instructions before optimization."
+
+  ./build/dslc examples/opt_demo.dsl --emit=ir-opt --stats
+      "Two after. 75% removed."      <-- most convincing moment
+
+  diff <(./build/dslc examples/gcd.dsl -O0) <(./build/dslc examples/gcd.dsl -O1)
+      "No output - optimized and unoptimized are byte-identical.
+       That's my correctness guarantee, verified live."
+
+
+-------------------------------------------------------------------------------
+  5. DEBUGGING WORKFLOW  (if a program gives the wrong answer)
+-------------------------------------------------------------------------------
+
+  Step 1 - shrink the program to the smallest one that still misbehaves.
+
+  Step 2 - is the OPTIMIZER guilty?  (this one command halves the search)
+      diff <(./build/dslc bug.dsl -O0) <(./build/dslc bug.dsl -O1)
+          DIFFERENT -> bug is in the optimizer
+          SAME      -> bug is NOT the optimizer (front end or backend)
+
+  Step 3a - optimizer guilty: see exactly what it changed
+      diff <(./build/dslc bug.dsl --emit=ir) <(./build/dslc bug.dsl --emit=ir-opt)
+
+  Step 3b - optimizer innocent: walk stages, find the FIRST one that's wrong
+      --emit=tokens   are operators right? (>= not split into > and =)
+      --emit=ast      is the tree shape right? (precedence / associativity)
+      --emit=ir       are branch targets right? every block terminated?
+      --emit=bc       are jump targets patched correctly?
+      still wrong     -> the VM: an opcode implemented incorrectly
+
+  Everything after the first wrong stage is just propagating garbage.
+
+
+-------------------------------------------------------------------------------
+  6. SANITIZERS  (how the undefined-behaviour bug was found)
+-------------------------------------------------------------------------------
+
+  cmake -B build-asan -S . \
+    -DCMAKE_BUILD_TYPE=Debug \
+    -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -g" \
+    -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+  cmake --build build-asan
+  ctest --test-dir build-asan --output-on-failure
+
+      ASan  = AddressSanitizer      -> memory bugs
+      UBSan = UndefinedBehaviorSan. -> undefined behaviour (signed overflow etc.)
+      -fno-sanitize-recover=all     -> ABORT on UB instead of just warning
+
+      NOTE: do NOT set ASAN_OPTIONS=detect_leaks=1 on macOS - unsupported,
+            every test aborts on startup.
+
+      Clean up afterwards:   rm -rf build-asan
+
+
+-------------------------------------------------------------------------------
+  7. SHELL SHORTCUTS  (defined in ~/.zshrc, work from any folder)
+-------------------------------------------------------------------------------
+
+      dslc-build      configure + compile
+      dslc-test       run all tests
+      dslc-clean      delete build/ (frees ~28 MB)
+      dslc-rebuild    clean + build
+      dslc file.dsl   run the compiler from anywhere
+
+  If they say "command not found" in a terminal that was already open:
+      source ~/.zshrc
+
+
+-------------------------------------------------------------------------------
+  8. HOUSEKEEPING
+-------------------------------------------------------------------------------
+
+  du -sh .                    project size  (source ~250 KB, build/ ~28 MB)
+  rm -rf build                delete build output (regenerate in ~10 sec)
+  git status --short          what git sees ("??" = untracked)
+
+
+-------------------------------------------------------------------------------
+  9. BEFORE THE INTERVIEW - CHECKLIST
+-------------------------------------------------------------------------------
+
+  [ ] cd ~/Downloads/dslc
+  [ ] cmake -B build -S . && cmake --build build      (so build/ exists)
+  [ ] ctest --test-dir build                          (confirm 7/7 pass)
+  [ ] ./build/dslc examples/fib.dsl                   (confirm 55, 6765)
+  [ ] terminal already open in the project folder
+
+===============================================================================
