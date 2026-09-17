@@ -96,3 +96,7 @@ Seven suites (dependency-free harness in `tests/test.h`), run via `ctest`:
 ## Deliberate scope cuts
 
 Named in `docs/SPEC.md §6` and worth stating up front: no full SSA/phi (variable optimization is per-block, not global); dead-store elimination is the provably-safe local subset; `call` is opaque (no inlining/interprocedural analysis); the backend is a register bytecode VM rather than native codegen. Each is a considered trade-off, not an oversight.
+
+## License
+
+MIT — see [LICENSE](LICENSE). Use, modify and redistribute freely; keep the copyright notice.
